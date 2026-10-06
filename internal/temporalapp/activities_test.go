@@ -3,7 +3,6 @@ package temporalapp
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
@@ -12,8 +11,7 @@ import (
 
 type activityRepositoryStub struct {
 	files   []domain.File
-	mutex   sync.Mutex
-	results map[int64]fileResult
+	results map[int64]FileResult
 }
 
 func (r *activityRepositoryStub) ListPendingFiles(context.Context, int64) ([]domain.File, error) {
@@ -27,12 +25,10 @@ func (r *activityRepositoryStub) SaveFileResult(
 	data []byte,
 	errorCode string,
 ) error {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
 	if r.results == nil {
-		r.results = make(map[int64]fileResult)
+		r.results = make(map[int64]FileResult)
 	}
-	r.results[fileID] = fileResult{fileID: fileID, data: data, errorCode: errorCode}
+	r.results[fileID] = FileResult{FileID: fileID, Data: data, ErrorCode: errorCode}
 	return nil
 }
 
@@ -63,18 +59,43 @@ func TestDownloadBatchContinuesAfterFileError(t *testing.T) {
 	}}
 	activities := NewActivities(repository, fileDownloader, 2)
 
-	err := activities.DownloadBatch(context.Background(), WorkflowInput{
+	results, err := activities.DownloadBatch(context.Background(), WorkflowInput{
 		DownloadID: 10,
 		Deadline:   time.Now().Add(time.Second),
 	})
 	if err != nil {
 		t.Fatalf("DownloadBatch() error = %v", err)
 	}
-	if string(repository.results[1].data) != "ok" {
-		t.Fatalf("successful file data = %q, want ok", repository.results[1].data)
+	resultByFileID := resultsByFileID(results)
+	if string(resultByFileID[1].Data) != "ok" {
+		t.Fatalf("successful file data = %q, want ok", resultByFileID[1].Data)
 	}
-	if repository.results[2].errorCode != domain.ErrorDownload {
-		t.Fatalf("failed file code = %q, want %q", repository.results[2].errorCode, domain.ErrorDownload)
+	if resultByFileID[2].ErrorCode != domain.ErrorDownload {
+		t.Fatalf("failed file code = %q, want %q", resultByFileID[2].ErrorCode, domain.ErrorDownload)
+	}
+}
+
+func TestSaveFileResults(t *testing.T) {
+	t.Parallel()
+
+	repository := &activityRepositoryStub{}
+	activities := NewActivities(repository, nil, 1)
+
+	err := activities.SaveFileResults(context.Background(), SaveResultsInput{
+		DownloadID: 12,
+		Results: []FileResult{
+			{FileID: 1, Data: []byte("ok")},
+			{FileID: 2, ErrorCode: domain.ErrorDownload},
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveFileResults() error = %v", err)
+	}
+	if string(repository.results[1].Data) != "ok" {
+		t.Fatalf("saved file data = %q, want ok", repository.results[1].Data)
+	}
+	if repository.results[2].ErrorCode != domain.ErrorDownload {
+		t.Fatalf("saved file code = %q, want %q", repository.results[2].ErrorCode, domain.ErrorDownload)
 	}
 }
 
@@ -90,14 +111,23 @@ func TestDownloadBatchStopsOnDeadline(t *testing.T) {
 	}}
 	activities := NewActivities(repository, fileDownloader, 1)
 
-	err := activities.DownloadBatch(context.Background(), WorkflowInput{
+	results, err := activities.DownloadBatch(context.Background(), WorkflowInput{
 		DownloadID: 11,
 		Deadline:   time.Now().Add(50 * time.Millisecond),
 	})
 	if err != nil {
 		t.Fatalf("DownloadBatch() error = %v", err)
 	}
-	if repository.results[1].errorCode != domain.ErrorTimeout {
-		t.Fatalf("error code = %q, want %q", repository.results[1].errorCode, domain.ErrorTimeout)
+	resultByFileID := resultsByFileID(results)
+	if resultByFileID[1].ErrorCode != domain.ErrorTimeout {
+		t.Fatalf("error code = %q, want %q", resultByFileID[1].ErrorCode, domain.ErrorTimeout)
 	}
+}
+
+func resultsByFileID(results []FileResult) map[int64]FileResult {
+	resultByFileID := make(map[int64]FileResult, len(results))
+	for _, result := range results {
+		resultByFileID[result.FileID] = result
+	}
+	return resultByFileID
 }

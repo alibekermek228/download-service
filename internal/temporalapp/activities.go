@@ -38,23 +38,28 @@ func NewActivities(
 	}
 }
 
-type fileResult struct {
-	fileID    int64
-	data      []byte
-	errorCode string
+type FileResult struct {
+	FileID    int64
+	Data      []byte
+	ErrorCode string
 }
 
-func (a *Activities) DownloadBatch(ctx context.Context, input WorkflowInput) error {
+type SaveResultsInput struct {
+	DownloadID int64
+	Results    []FileResult
+}
+
+func (a *Activities) DownloadBatch(ctx context.Context, input WorkflowInput) ([]FileResult, error) {
 	files, err := a.repository.ListPendingFiles(ctx, input.DownloadID)
 	if err != nil {
-		return fmt.Errorf("list pending files: %w", err)
+		return nil, fmt.Errorf("list pending files: %w", err)
 	}
 
 	downloadContext, cancel := context.WithDeadline(ctx, input.Deadline)
 	defer cancel()
 
 	semaphore := make(chan struct{}, a.maxConcurrent)
-	results := make([]fileResult, 0, len(files))
+	results := make([]FileResult, 0, len(files))
 	var waitGroup sync.WaitGroup
 	var mutex sync.Mutex
 
@@ -64,12 +69,12 @@ func (a *Activities) DownloadBatch(ctx context.Context, input WorkflowInput) err
 		go func() {
 			defer waitGroup.Done()
 
-			result := fileResult{fileID: file.ID}
+			result := FileResult{FileID: file.ID}
 			select {
 			case semaphore <- struct{}{}:
 				defer func() { <-semaphore }()
 			case <-downloadContext.Done():
-				result.errorCode = domain.ErrorTimeout
+				result.ErrorCode = domain.ErrorTimeout
 				mutex.Lock()
 				results = append(results, result)
 				mutex.Unlock()
@@ -78,9 +83,9 @@ func (a *Activities) DownloadBatch(ctx context.Context, input WorkflowInput) err
 
 			data, downloadErr := a.downloader.Download(downloadContext, file.URL)
 			if downloadErr != nil {
-				result.errorCode = downloader.ErrorCode(downloadErr)
+				result.ErrorCode = downloader.ErrorCode(downloadErr)
 			} else {
-				result.data = data
+				result.Data = data
 			}
 
 			mutex.Lock()
@@ -91,17 +96,19 @@ func (a *Activities) DownloadBatch(ctx context.Context, input WorkflowInput) err
 
 	waitGroup.Wait()
 
-	// Use the Activity context for saving results. The download deadline can be
-	// expired at this point, but the result and DONE status still have to reach DB.
-	for _, result := range results {
+	return results, nil
+}
+
+func (a *Activities) SaveFileResults(ctx context.Context, input SaveResultsInput) error {
+	for _, result := range input.Results {
 		if err := a.repository.SaveFileResult(
 			ctx,
 			input.DownloadID,
-			result.fileID,
-			result.data,
-			result.errorCode,
+			result.FileID,
+			result.Data,
+			result.ErrorCode,
 		); err != nil {
-			return fmt.Errorf("save file %d result: %w", result.fileID, err)
+			return fmt.Errorf("save file %d result: %w", result.FileID, err)
 		}
 	}
 

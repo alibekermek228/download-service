@@ -3,10 +3,11 @@ package temporalapp
 import "time"
 
 const (
-	WorkflowName          = "DownloadWorkflow"
-	ActivityDownloadBatch = "DownloadActivities.DownloadBatch"
-	ActivityMarkDone      = "DownloadActivities.MarkDone"
-	ActivityFailDownload  = "DownloadActivities.FailDownload"
+	WorkflowName            = "DownloadWorkflow"
+	ActivityDownloadBatch   = "DownloadActivities.DownloadBatch"
+	ActivitySaveFileResults = "DownloadActivities.SaveFileResults"
+	ActivityMarkDone        = "DownloadActivities.MarkDone"
+	ActivityFailDownload    = "DownloadActivities.FailDownload"
 )
 
 type WorkflowInput struct {

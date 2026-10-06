@@ -20,23 +20,27 @@ func DownloadWorkflow(ctx workflow.Context, input WorkflowInput) error {
 			MaximumAttempts: 3,
 		},
 	})
+	var results []FileResult
 	if err := workflow.ExecuteActivity(
 		downloadContext,
 		ActivityDownloadBatch,
 		input,
-	).Get(downloadContext, nil); err != nil {
-		cleanupContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-			StartToCloseTimeout: 30 * time.Second,
-			RetryPolicy: &temporal.RetryPolicy{
-				MaximumAttempts: 3,
-			},
-		})
-		_ = workflow.ExecuteActivity(
-			cleanupContext,
-			ActivityFailDownload,
-			input.DownloadID,
-		).Get(cleanupContext, nil)
-		return err
+	).Get(downloadContext, &results); err != nil {
+		return failWorkflow(ctx, input.DownloadID, err)
+	}
+
+	saveContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	})
+	if err := workflow.ExecuteActivity(
+		saveContext,
+		ActivitySaveFileResults,
+		SaveResultsInput{DownloadID: input.DownloadID, Results: results},
+	).Get(saveContext, nil); err != nil {
+		return failWorkflow(ctx, input.DownloadID, err)
 	}
 
 	finishContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -50,4 +54,20 @@ func DownloadWorkflow(ctx workflow.Context, input WorkflowInput) error {
 		ActivityMarkDone,
 		input.DownloadID,
 	).Get(finishContext, nil)
+}
+
+func failWorkflow(ctx workflow.Context, downloadID int64, cause error) error {
+	cleanupContext := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: 30 * time.Second,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	})
+	_ = workflow.ExecuteActivity(
+		cleanupContext,
+		ActivityFailDownload,
+		downloadID,
+	).Get(cleanupContext, nil)
+
+	return cause
 }

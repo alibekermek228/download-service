@@ -22,6 +22,10 @@ func NewWorker(
 		activity.RegisterOptions{Name: ActivityDownloadBatch},
 	)
 	temporalWorker.RegisterActivityWithOptions(
+		activities.SaveFileResults,
+		activity.RegisterOptions{Name: ActivitySaveFileResults},
+	)
+	temporalWorker.RegisterActivityWithOptions(
 		activities.MarkDone,
 		activity.RegisterOptions{Name: ActivityMarkDone},
 	)
