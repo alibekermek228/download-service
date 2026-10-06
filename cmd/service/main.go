@@ -41,13 +41,17 @@ func run() error {
 	)
 	defer stop()
 
-	pool, err := connectPostgres(appContext, cfg.DatabaseURL, 30*time.Second)
+	postgresContext, cancelPostgres := context.WithTimeout(appContext, 30*time.Second)
+	pool, err := connectPostgres(postgresContext, cfg.DatabaseURL)
+	cancelPostgres()
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 
-	temporalClient, err := connectTemporal(appContext, cfg.TemporalAddress, 30*time.Second)
+	temporalContext, cancelTemporal := context.WithTimeout(appContext, 30*time.Second)
+	temporalClient, err := connectTemporal(temporalContext, cfg.TemporalAddress)
+	cancelTemporal()
 	if err != nil {
 		return err
 	}
@@ -115,44 +119,25 @@ func run() error {
 	return nil
 }
 
-func connectPostgres(ctx context.Context, databaseURL string, timeout time.Duration) (*pgxpool.Pool, error) {
-	connectContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	for {
-		pool, err := pgxpool.New(connectContext, databaseURL)
-		if err == nil {
-			err = pool.Ping(connectContext)
-		}
-		if err == nil {
-			return pool, nil
-		}
-		if pool != nil {
-			pool.Close()
-		}
-
-		select {
-		case <-connectContext.Done():
-			return nil, fmt.Errorf("connect to PostgreSQL: %w", err)
-		case <-time.After(time.Second):
-		}
+func connectPostgres(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("create PostgreSQL pool: %w", err)
 	}
+
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("connect to PostgreSQL: %w", err)
+	}
+
+	return pool, nil
 }
 
-func connectTemporal(ctx context.Context, address string, timeout time.Duration) (client.Client, error) {
-	connectContext, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	for {
-		temporalClient, err := client.DialContext(connectContext, client.Options{HostPort: address})
-		if err == nil {
-			return temporalClient, nil
-		}
-
-		select {
-		case <-connectContext.Done():
-			return nil, fmt.Errorf("connect to Temporal: %w", err)
-		case <-time.After(time.Second):
-		}
+func connectTemporal(ctx context.Context, address string) (client.Client, error) {
+	temporalClient, err := client.DialContext(ctx, client.Options{HostPort: address})
+	if err != nil {
+		return nil, fmt.Errorf("connect to Temporal: %w", err)
 	}
+
+	return temporalClient, nil
 }
