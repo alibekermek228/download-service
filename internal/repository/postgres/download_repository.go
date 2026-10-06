@@ -69,9 +69,18 @@ func (r *DownloadRepository) CreateDownload(
 }
 
 func (r *DownloadRepository) GetDownload(ctx context.Context, id int64) (domain.Download, error) {
+	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return domain.Download{}, fmt.Errorf("begin read transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
 	var download domain.Download
 	var timeoutMilliseconds int64
-	err := r.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT id, status, timeout_ms, created_at
 		FROM downloads
 		WHERE id = $1
@@ -84,7 +93,7 @@ func (r *DownloadRepository) GetDownload(ctx context.Context, id int64) (domain.
 	}
 	download.Timeout = time.Duration(timeoutMilliseconds) * time.Millisecond
 
-	rows, err := r.pool.Query(ctx, `
+	rows, err := tx.Query(ctx, `
 		SELECT id, download_id, position, url, data, COALESCE(error_code, '')
 		FROM download_files
 		WHERE download_id = $1
@@ -93,7 +102,6 @@ func (r *DownloadRepository) GetDownload(ctx context.Context, id int64) (domain.
 	if err != nil {
 		return domain.Download{}, fmt.Errorf("select download files: %w", err)
 	}
-	defer rows.Close()
 
 	for rows.Next() {
 		var file domain.File
@@ -105,12 +113,17 @@ func (r *DownloadRepository) GetDownload(ctx context.Context, id int64) (domain.
 			&file.Data,
 			&file.ErrorCode,
 		); err != nil {
+			rows.Close()
 			return domain.Download{}, fmt.Errorf("scan download file: %w", err)
 		}
 		download.Files = append(download.Files, file)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		return domain.Download{}, fmt.Errorf("iterate download files: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return domain.Download{}, fmt.Errorf("commit read transaction: %w", err)
 	}
 
 	return download, nil
