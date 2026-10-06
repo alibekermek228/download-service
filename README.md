@@ -44,7 +44,15 @@ migrations                  схема базы данных
 
 ## Запуск
 
-Понадобится Docker Desktop с поддержкой `docker compose`.
+Понадобятся Docker Desktop с поддержкой `docker compose` и Temporal CLI.
+
+Сначала в отдельном терминале запустите локальный Temporal:
+
+```bash
+temporal server start-dev
+```
+
+Затем в новом терминале запустите приложение и PostgreSQL:
 
 ```bash
 docker compose up --build
@@ -53,7 +61,7 @@ docker compose up --build
 После запуска доступны:
 
 - API: `http://localhost:8081`;
-- Temporal UI: `http://localhost:8080`;
+- Temporal UI: `http://localhost:8233`;
 - PostgreSQL приложения: `localhost:5432`.
 
 Остановка:
